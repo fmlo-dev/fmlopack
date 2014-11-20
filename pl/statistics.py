@@ -31,9 +31,14 @@ class PPCA(PCA):
         self.l_org = np.zeros(self.dim_data)
         self.l_org[:len(self.eigen)] = self.eigen / len(self.eigen)
         self.bic = np.asarray([self.prob_dim_bic(k) for k in range(1, self.dim_max)])
+        self.laplace = np.asarray([self.prob_dim_laplace(k) for k in range(1, self.dim_max)])
 
     # --------------------------------------------------------------------------
     def prob_dim_laplace(self, k, sharpness=1.0):
+        '''
+        return probability (log10, not normalized) of k-dim model
+        '''
+        print k
         d = self.dim_data
         N = self.dim_max
         m = d*k - k*(k+1)/2.0
@@ -49,17 +54,22 @@ class PPCA(PCA):
         Az = self._Az(k, self.l_org, l_opt)
         pU = self._pU(k)
 
-        p_dim = pU
-        p_dim *= np.prod(self.l_org[k:])**(-N/2.0)
-        p_dim *= v_opt**(-N*(d-k)/2.0)
-        p_dim *= (2*np.pi)**((m+k)/2.0)
-        p_dim *= Az**(-0.5)
-        p_dim *= N**(-k/2.0)
+        p_dim = 0.0
+        p_dim += pU
+        p_dim += (-N/2.0) * np.log10(np.prod(self.l_org[:k]))
+        p_dim += (-N*(d-k)/2.0) * np.log10(v_opt)
+        p_dim += ((m+k)/2.0) * np.log10(2.0*np.pi)
+        p_dim += -0.5 * Az
+        p_dim += -(k/2.0) * np.log10(N)
 
         return p_dim
 
     # --------------------------------------------------------------------------
     def prob_dim_bic(self, k, sharpness=1.0):
+        '''
+        return probability (log10, not normalized) of k-dim model
+        using BIC approximation
+        '''
         d = self.dim_data
         N = self.dim_max
         m = d*k - k*(k+1)/2.0
@@ -81,8 +91,11 @@ class PPCA(PCA):
         d  = self.dim_data
         i  = np.arange(k)+1.0
         q  = (d-i+1.0)/2.0
-        
-        pU = 2**(-k) * np.prod(sp.gamma(q)*np.pi**q)
+
+        pU = 0.0
+        pU += -k * np.log10(2)
+        pU += np.sum(-q * np.log10(np.pi))
+        pU += np.sum((sp.gammaln(q)/np.log(10)))
 
         return pU
 
@@ -90,10 +103,10 @@ class PPCA(PCA):
     def _Az(self, k, l_org, l_opt):
         N  = self.dim_max
         d  = self.dim_data
-        Az = 1.0
+        Az = 0.0
 
         for i in range(k):
             for j in range(i+1, d):
-                Az *= (1/l_opt[j]-1/l_opt[i]) * (l_org[i]-l_org[j]) * N
+                Az += np.log10((1/l_opt[j]-1/l_opt[i]) * (l_org[i]-l_org[j]) * N)
 
         return Az
