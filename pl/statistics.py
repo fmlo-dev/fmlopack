@@ -30,15 +30,14 @@ class PPCA(PCA):
         self.dim_max  = scan.shape[0]
         self.l_org = np.zeros(self.dim_data)
         self.l_org[:len(self.eigen)] = self.eigen / len(self.eigen)
-        self.bic = np.asarray([self.prob_dim_bic(k) for k in range(1, self.dim_max)])
-        self.laplace = np.asarray([self.prob_dim_laplace(k) for k in range(1, self.dim_max)])
+        #self.bic = np.asarray([self.prob_dim_bic(k) for k in range(1, self.dim_max)])
+        #self.laplace = np.asarray([self.prob_dim_laplace(k) for k in range(1, self.dim_max)])
 
     # --------------------------------------------------------------------------
-    def prob_dim_laplace(self, k, sharpness=1.0):
+    def p_laplace(self, k, sharpness=1.0):
         '''
         return probability (log10, not normalized) of k-dim model
         '''
-        print k
         d = self.dim_data
         N = self.dim_max
         m = d*k - k*(k+1)/2.0
@@ -54,7 +53,7 @@ class PPCA(PCA):
         Az = self._Az(k, self.l_org, l_opt)
         pU = self._pU(k)
 
-        p_dim = 0.0
+        p_dim  = 0.0
         p_dim += pU
         p_dim += (-N/2.0) * np.log10(np.prod(self.l_org[:k]))
         p_dim += (-N*(d-k)/2.0) * np.log10(v_opt)
@@ -65,7 +64,7 @@ class PPCA(PCA):
         return p_dim
 
     # --------------------------------------------------------------------------
-    def prob_dim_bic(self, k, sharpness=1.0):
+    def p_bic(self, k, sharpness=1.0):
         '''
         return probability (log10, not normalized) of k-dim model
         using BIC approximation
@@ -79,7 +78,7 @@ class PPCA(PCA):
 
         v_opt = N*np.sum(self.l_org[k:]) / (n*(d-k)-2.0)
 
-        p_dim =  0.0
+        p_dim  =  0.0
         p_dim += (-N/2.0) * np.log10(np.prod(self.l_org[:k]))
         p_dim += (-N*(d-k)/2.0) * np.log10(v_opt)
         p_dim += (-(m+k)/2.0) * np.log10(N)

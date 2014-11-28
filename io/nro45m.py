@@ -69,6 +69,9 @@ class Nro45mData(pyfits.HDUList):
     def __init__(self, hdus=[], file=None):
         pyfits.HDUList.__init__(self, hdus, file)
 
+    def version(self):
+        return self['PRIMARY'].header['VERSION']
+
     # --------------------------------------------------------------------------
     def fmscan(self, array_id, offset_fmlolog=3, offset_anglog=995):
         '''
@@ -259,6 +262,7 @@ class Nro45mData(pyfits.HDUList):
         Load a fmlolog and append a BinTableHDU to HDUList. 
         '''
         time    = []
+        status  = []
         freq_fm = []
         freq_lo = []
         v_rad   = []
@@ -275,6 +279,7 @@ class Nro45mData(pyfits.HDUList):
             time_dt    = datetime.strptime(time_str, time_fmt_r)
 
             time.append(time_dt.strftime(time_fmt_w))
+            status.append(items[1])
             freq_fm.append(items[2])
             freq_lo.append(items[3])
             v_rad.append(items[4])
