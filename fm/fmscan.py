@@ -42,13 +42,6 @@ class FmScan(np.ndarray):
         return scan
 
     # --------------------------------------------------------------------------
-    def __array_finalize__(self, scan):
-        if scan is None: return
-        self.tsys     = getattr(scan, 'tsys', None)
-        self.fmrecord = getattr(scan, 'fmrecord', None)
-        self.fmstatus = getattr(scan, 'fmstatus', None)
-
-    # --------------------------------------------------------------------------
     def demodulate(self, target='observed'):
         # check valid
         if not self.fmstatus == 'modulated':
@@ -100,9 +93,9 @@ class FmScan(np.ndarray):
         if self.fmstatus == 'modulated':
             raise FmScanError('this attribute is unavailable in modulated scan')
 
-        if mode == 'signal':  return self._spec()
-        elif mode == 'noise': return self._noisespec()
-        elif mode == 'sn':    return self._spec()/self._noisespec()
+        if   mode == 'signal': return self._spec()
+        elif mode == 'noise':  return self._noisespec()
+        elif mode == 'sn':     return self._spec()/self._noisespec()
 
     # --------------------------------------------------------------------------
     def pca(self, target='clean', fraction=0.990, time_chunk=None, npc_max=None):
@@ -128,7 +121,7 @@ class FmScan(np.ndarray):
         return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus)
 
     # --------------------------------------------------------------------------
-    def ppca(self, target='clean', mode='laplace', time_chunk=None, npc_max=None):
+    def ppca(self, target='clean', mode='laplace', time_chunk=None, npc_max=None, sharpness=1.0):
         in_scan  = np.asarray(self)
         out_scan = np.zeros_like(in_scan)
         tchunk   = time_chunk or len(in_scan)
@@ -140,12 +133,13 @@ class FmScan(np.ndarray):
 
             if i == 0:
                 if mode == 'laplace':
-                    prob  = np.asarray([p.p_laplace(k) for k in range(1, npc_max)])
+                    prob  = np.asarray([p.p_laplace(k, sharpness) for k in range(1, npc_max)])
                 elif mode == 'bic':
-                    prob  = np.asarray([p.p_bic(k) for k in range(1, npc_max)])
+                    prob  = np.asarray([p.p_bic(k, sharpness) for k in range(1, npc_max)])
 
             npc   = np.argmax(prob)+1
-            print('Npc = {}'.format(npc))
+            if i == 0:
+                print('Npc = {}'.format(npc))
             com_i = np.dot(p.U[:,:npc], np.dot(np.diag(p.d[:npc]), p.Vt[:npc]))
 
             if target == 'clean':
@@ -237,6 +231,17 @@ class FmScan(np.ndarray):
         return idx_fmrecord
 
     # --------------------------------------------------------------------------
+    def __array_finalize__(self, scan):
+        if scan is None: return
+        self.tsys     = getattr(scan, 'tsys', None)
+        self.fmrecord = getattr(scan, 'fmrecord', None)
+        self.fmstatus = getattr(scan, 'fmstatus', None)
+
+    # --------------------------------------------------------------------------
+    def __array_wrap__(self, out_scan, context=None):
+        return np.ndarray.__array_wrap__(self, out_scan, context)
+
+    # --------------------------------------------------------------------------
     def __getitem__(self, *idx):
         sl_scan     = np.asarray(self).__getitem__(*idx)
         sl_fmrecord = self.fmrecord.__getitem__(self.__idx__(*idx))
@@ -293,6 +298,14 @@ def zeros_like(fmscan):
 
     return FmScan(scan, tsys, fmrecord, fmstatus)
 
+def copy(fmscan):
+    scan     = np.copy(fmscan)
+    tsys     = fmscan.tsys
+    fmrecord = fmscan.fmrecord
+    fmstatus = fmscan.fmstatus
+
+    return FmScan(scan, tsys, fmrecord, fmstatus)
+
 
 # ==============================================================================
 # ==============================================================================
@@ -302,23 +315,3 @@ class FmScanError(Exception):
 
     def __str__(self):
         return self.message
-
-
-# ==============================================================================
-# ==============================================================================
-class PCA:
-    def __init__(self, scan, fraction):
-        assert 0 <= fraction <= 1
-        self.U, self.d, self.Vt = np.linalg.svd(scan, full_matrices=False)
-
-        assert np.all(self.d[:-1] >= self.d[1:])
-        self.eigen = self.d**2
-        self.sumvariance = np.cumsum(self.eigen)
-        self.sumvariance /= self.sumvariance[-1]
-        self.npc = np.searchsorted(self.sumvariance, fraction) + 1
-
-        for d in self.d:
-            if d > self.d[0] * 1e-6:
-                self.dinv = np.array([1/d])
-            else:
-                self.dinv = np.array([0])
