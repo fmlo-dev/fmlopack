@@ -8,7 +8,6 @@ mailto: taniguchi_at_ioa.s.u-tokyo.ac.jp
 '''
 
 import numpy as np
-import scipy.signal as sig
 import scipy.optimize as opt
 import matplotlib.pyplot as plt
 import fmlopack.fm.fmscan as fms
@@ -39,7 +38,7 @@ class CutoffModel(object):
 class GaussianModel(object):
     # --------------------------------------------------------------------------
     def __init__(self, fmscan, sn_threshold=5, sub_fraction=0.5,
-                iter_max=1000, init_width=10e6, dev=False):
+                iter_max=10000, init_width=2e9/4096, dev=False):
         self.nuobs = fmscan.nuobs()
         self.spec  = fmscan.spectrum('signal')
         self.noise = fmscan.spectrum('noise')
@@ -47,6 +46,7 @@ class GaussianModel(object):
         self.niter = iter_max
         self.width = init_width
         self.frac  = sub_fraction
+        self.dev   = dev
         self.model, self.resid = self.modeling()
 
     # --------------------------------------------------------------------------
@@ -70,7 +70,11 @@ class GaussianModel(object):
                 return func
 
             init_params = [a_peak, self.width]
-            popt, pcov = opt.curve_fit(gaussian, self.nuobs, resid, init_params)
+
+            try:
+                popt, pcov = opt.curve_fit(gaussian, self.nuobs, resid, init_params)
+            except:
+                break
 
             model += self.frac * gaussian(self.nuobs, *popt)
             resid -= self.frac * gaussian(self.nuobs, *popt)
@@ -101,7 +105,7 @@ class GaussianModel(object):
 class DeconvolutionModel(object):
     # --------------------------------------------------------------------------
     def __init__(self, fmscan, sn_threshold=10, sub_fraction=0.5,
-                iter_max=1000, init_width=5e6, init_cutoff=20, dev=False):
+                iter_max=10000, init_width=2e9/4096, init_cutoff=20, dev=False):
         self.nuobs  = fmscan.nuobs()
         self.spec   = fmscan.spectrum('signal')
         self.noise  = fmscan.spectrum('noise')

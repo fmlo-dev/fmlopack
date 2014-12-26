@@ -7,7 +7,7 @@ affill: Institute of Astronomy, the University of Tokyo
 mailto: taniguchi_at_ioa.s.u-tokyo.ac.jp
 '''
 
-version = '1.1'
+version = '1.2'
 
 # ==============================================================================
 # ==============================================================================
@@ -121,25 +121,19 @@ class FmScan(np.ndarray):
         return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus)
 
     # --------------------------------------------------------------------------
-    def ppca(self, target='clean', mode='laplace', time_chunk=None, npc_max=None, sharpness=1.0):
+    def ppca(self, target='clean', mode='bic', time_chunk=None, npc_max=None, sharpness=0.1):
         in_scan  = np.asarray(self)
         out_scan = np.zeros_like(in_scan)
         tchunk   = time_chunk or len(in_scan)
+        npc_max  = tchunk-1 if npc_max is None else npc_max
 
         # PCA cleaning
         for i in range(len(in_scan)/tchunk):
             in_i  = in_scan[i*tchunk:(i+1)*tchunk]
             p     = stat.PPCA(in_i)
-
-            if i == 0:
-                if mode == 'laplace':
-                    prob  = np.asarray([p.p_laplace(k, sharpness) for k in range(1, npc_max)])
-                elif mode == 'bic':
-                    prob  = np.asarray([p.p_bic(k, sharpness) for k in range(1, npc_max)])
-
-            npc   = np.argmax(prob)+1
-            if i == 0:
-                print('Npc = {}'.format(npc))
+            prob  = [getattr(p, mode)(k, sharpness) for k in range(1, npc_max)]
+            npc   = np.argmax(np.asarray(prob))+1
+            print('Npc = {}'.format(npc))
             com_i = np.dot(p.U[:,:npc], np.dot(np.diag(p.d[:npc]), p.Vt[:npc]))
 
             if target == 'clean':
@@ -152,11 +146,23 @@ class FmScan(np.ndarray):
         return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus)
 
     # --------------------------------------------------------------------------
+    def offset(self, fmrecord_offset=0):
+        offset = int(fmrecord_offset)
+        if offset >= 0:
+            scan     = np.copy(self[offset:])
+            fmrecord = np.copy(self.fmrecord[:-offset])
+        else:
+            scan     = np.copy(self[:offset])
+            fmrecord = np.copy(self.fmrecord[-offset:])
+
+        return FmScan(scan, self.tsys, fmrecord, self.fmstatus)
+
+    # --------------------------------------------------------------------------
     def _demod(self, mod, ch_fm):
-        ch_fm = np.asarray(ch_fm)
-        mod   = np.asarray(mod)
-        empty = np.zeros((mod.shape[0], ch_fm.ptp()))
-        demod = np.hstack((mod, empty))
+        ch_fm = np.copy(np.asarray(ch_fm))
+        mod   = np.copy(np.asarray(mod))
+        empty = np.copy(np.zeros((mod.shape[0], ch_fm.ptp())))
+        demod = np.copy(np.hstack((mod, empty)))
 
         for i in range(len(demod)):
             demod[i] = np.roll(demod[i], ch_fm[i]-ch_fm.min())
@@ -165,8 +171,8 @@ class FmScan(np.ndarray):
 
     # --------------------------------------------------------------------------
     def _mod(self, demod, ch_fm, wid):
-        ch_fm = np.asarray(ch_fm)
-        demod = np.asarray(demod)
+        ch_fm = np.copy(np.asarray(ch_fm))
+        demod = np.copy(np.asarray(demod))
 
         for i in range(len(demod)):
             demod[i] = np.roll(demod[i], ch_fm[i]*(-1)+ch_fm.min())

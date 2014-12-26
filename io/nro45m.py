@@ -29,7 +29,8 @@ from decimal  import Decimal
 from subprocess import Popen, PIPE
 
 import numpy  as np
-import pyfits
+import pandas as pd
+import pyfits as pf
 
 import fmlopack.fm.fmscan as fms
 
@@ -64,16 +65,16 @@ def open(fitsname=None, mode='readonly', memmap=None, save_backup=False, **kwarg
 
 # ==============================================================================
 # ==============================================================================
-class Nro45mData(pyfits.HDUList):
+class Nro45mData(pf.HDUList):
     # --------------------------------------------------------------------------
     def __init__(self, hdus=[], file=None):
-        pyfits.HDUList.__init__(self, hdus, file)
+        pf.HDUList.__init__(self, hdus, file)
 
     def version(self):
         return self['PRIMARY'].header['VERSION']
 
     # --------------------------------------------------------------------------
-    def fmscan(self, array_id, offset_fmlolog=3, offset_anglog=995):
+    def fmscan(self, array_id, time_offset=0):
         '''
         Return a FmScan of the selected array ID (e.g. A5)
         '''
@@ -83,17 +84,21 @@ class Nro45mData(pyfits.HDUList):
         scan_len = header['NAXIS2']
         chan_wid = header['BANDWID'] / scan_wid
 
-        fmlolog = self['FMLOLOG'].data[offset_fmlolog:offset_fmlolog+scan_len]
-        chan_fm = fmlolog.FREQFM    / chan_wid
-
-        antlog  = self['ANTLOG'].data[offset_fmlolog:offset_fmlolog+scan_len]
-        radec   = antlog.RADEC
-
+        fmlolog    = self['FMLOLOG'].data[time_offset+3:time_offset+scan_len+3]
+        chan_fm    = fmlolog.FREQFM / chan_wid
         freq_min   = header['RESTFREQ'] - 0.5*(scan_wid-1)*chan_wid
         freq_max   = header['RESTFREQ'] + 0.5*(scan_wid-1)*chan_wid
         freq_min  += chan_fm * chan_wid
         freq_max  += chan_fm * chan_wid
         freq_range = np.vstack((freq_min, freq_max)).T
+
+        # radec
+        antlog = self['ANTLOG'].data
+        time_min = pd.to_datetime(pd.Series(fmlolog.TIME)).min()
+        time_max = pd.to_datetime(pd.Series(fmlolog.TIME)).max()
+        time_idx = pd.to_datetime(pd.Series(antlog.TIME))
+        radec_df = pd.DataFrame(antlog.RADEC, time_idx)[time_min:time_max]
+        radec    = np.asarray(radec_df.resample('100L').interpolate())
 
         # other components
         date_time = fmlolog.TIME
@@ -101,7 +106,7 @@ class Nro45mData(pyfits.HDUList):
         tsys      = np.asarray(header['TSYS'].split(','), 'f8')
         fmstatus  = 'modulated'
 
-        # make fminfo
+        # make fmrecord
         alist  = [chan_fm, freq_range, interval, date_time, radec]
         names  = ['CHANFM', 'FREQRANGE', 'INTERVAL', 'DATETIME', 'RADEC']
         dtypes = ['i8', 'f8', 'f8', 'a26', 'f8']
@@ -115,7 +120,7 @@ class Nro45mData(pyfits.HDUList):
         '''
         Load a obstable and append a PrimaryHDU to HDUList
         '''
-        hdu = pyfits.PrimaryHDU()
+        hdu = pf.PrimaryHDU()
         hdu.header['ORGFILE'] = obstable.split('/')[-1], 'Original file'
         hdu.header['VERSION'] = version, 'Version of fmlopack'
 
@@ -231,7 +236,7 @@ class Nro45mData(pyfits.HDUList):
                 hdu_tsys = tsys[scan_wid*j: scan_wid*(j+1)][::-1]
                 hdu_tsys_str = str(list(hdu_tsys)).strip('[]')
 
-            hdu = pyfits.ImageHDU()
+            hdu = pf.ImageHDU()
             hdu.data = hdu_data
             hdu.header['EXTNAME']  = idx_to_id(j), 'Name of HDU'
             hdu.header['ORGFILE']  = sam45log.split('/')[-1], 'Original file'
@@ -291,7 +296,7 @@ class Nro45mData(pyfits.HDUList):
         names  = ['TIME', 'FREQFM', 'FREQLO', 'VRAD']
         dtypes = ['a26', 'f8', 'f8', 'f8']
 
-        hdu = pyfits.BinTableHDU()
+        hdu = pf.BinTableHDU()
         hdu.data = np.rec.fromarrays(alist, zip(names, dtypes))
 
         hdu.header['EXTNAME'] = 'FMLOLOG', 'Name of HDU'
@@ -339,7 +344,7 @@ class Nro45mData(pyfits.HDUList):
         dtypes = ['a26', 'f8', 'f8', 'f8', 'f8']
         shapes = [1, 2, 2, 2, 2]
 
-        hdu = pyfits.BinTableHDU()
+        hdu = pf.BinTableHDU()
         hdu.data = np.rec.fromarrays(alist, zip(names, dtypes, shapes))
 
         hdu.header['EXTNAME'] = 'ANTLOG', 'Name of HDU'

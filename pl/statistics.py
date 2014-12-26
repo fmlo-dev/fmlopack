@@ -3,7 +3,10 @@
 import numpy as np
 import scipy.special as sp
 import matplotlib.pyplot as plt
+from itertools import product
 
+# ==============================================================================
+# ==============================================================================
 class PCA:
     def __init__(self, scan, fraction):
         assert 0 <= fraction <= 1
@@ -22,6 +25,8 @@ class PCA:
                 self.dinv = np.array([0])
 
 
+# ==============================================================================
+# ==============================================================================
 class PPCA(PCA):
     # --------------------------------------------------------------------------
     def __init__(self, scan):
@@ -30,11 +35,9 @@ class PPCA(PCA):
         self.dim_max  = scan.shape[0]
         self.l_org = np.zeros(self.dim_data)
         self.l_org[:len(self.eigen)] = self.eigen / len(self.eigen)
-        #self.bic = np.asarray([self.prob_dim_bic(k) for k in range(1, self.dim_max)])
-        #self.laplace = np.asarray([self.prob_dim_laplace(k) for k in range(1, self.dim_max)])
 
     # --------------------------------------------------------------------------
-    def p_laplace(self, k, sharpness=1.0):
+    def laplace(self, k, sharpness=1.0):
         '''
         return probability (log10, not normalized) of k-dim model
         '''
@@ -64,7 +67,7 @@ class PPCA(PCA):
         return p_dim
 
     # --------------------------------------------------------------------------
-    def p_bic(self, k, sharpness=1.0):
+    def bic(self, k, sharpness=1.0):
         '''
         return probability (log10, not normalized) of k-dim model
         using BIC approximation
@@ -102,10 +105,13 @@ class PPCA(PCA):
     def _Az(self, k, l_org, l_opt):
         N  = self.dim_max
         d  = self.dim_data
-        Az = 0.0
 
-        for i in range(k):
-            for j in range(i+1, d):
-                Az += np.log10((1/l_opt[j]-1/l_opt[i]) * (l_org[i]-l_org[j]) * N)
+        l_org_v = l_org[:k].reshape((k,1))
+        l_org_h = l_org
+        l_opt_v = l_opt[:k].reshape((k,1))
+        l_opt_h = l_opt
 
-        return Az
+        Az_map = np.log10((1/l_opt_h-1/l_opt_v) * (l_org_v-l_org_h) * N)
+        Az_sum = np.sum(np.ma.masked_invalid(np.triu(Az_map)))
+
+        return Az_sum
