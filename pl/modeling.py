@@ -18,7 +18,7 @@ import fmlopack.fm.fmscan as fms
 class CutoffModel(object):
     # --------------------------------------------------------------------------
     def __init__(self, fmscan, sn_threshold=10):
-        self.nuobs = fmscan.nuobs()
+        self.nuobs = fmscan.nuobs(useGHz=True)
         self.spec  = fmscan.spectrum('signal')
         self.noise = fmscan.spectrum('noise')
         self.thres = sn_threshold
@@ -38,8 +38,8 @@ class CutoffModel(object):
 class GaussianModel(object):
     # --------------------------------------------------------------------------
     def __init__(self, fmscan, sn_threshold=5, sub_fraction=0.5,
-                iter_max=10000, init_width=2e9/4096, dev=False):
-        self.nuobs = fmscan.nuobs()
+                iter_max=10000, init_width=2.0/4096, dev=False):
+        self.nuobs = fmscan.nuobs(useGHz=True)
         self.spec  = fmscan.spectrum('signal')
         self.noise = fmscan.spectrum('noise')
         self.thres = sn_threshold
@@ -84,7 +84,7 @@ class GaussianModel(object):
 
     # --------------------------------------------------------------------------
     def plot(self):
-        nuobs = self.nuobs*1e-9
+        nuobs = self.nuobs
         plt.figure(figsize=(20,10))
         plt.plot(nuobs, self.spec, label='spectrum')
         plt.plot(nuobs, self.model, label='model')
@@ -105,8 +105,8 @@ class GaussianModel(object):
 class DeconvolutionModel(object):
     # --------------------------------------------------------------------------
     def __init__(self, fmscan, sn_threshold=10, sub_fraction=0.5,
-                iter_max=10000, init_width=2e9/4096, init_cutoff=20, dev=False):
-        self.nuobs  = fmscan.nuobs()
+                iter_max=10000, init_width=2.0/4096, init_cutoff=20, dev=False):
+        self.nuobs  = fmscan.nuobs(useGHz=True)
         self.spec   = fmscan.spectrum('signal')
         self.noise  = fmscan.spectrum('noise')
         self.thres  = sn_threshold
@@ -183,7 +183,7 @@ class DeconvolutionModel(object):
 
     # --------------------------------------------------------------------------
     def plot(self):
-        nuobs = self.nuobs*1e-9
+        nuobs = self.nuobs
         plt.figure(figsize=(20,10))
         plt.plot(nuobs, self.spec, label='spectrum')
         plt.plot(nuobs, self.convl, label='convolved model')

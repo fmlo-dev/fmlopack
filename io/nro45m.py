@@ -31,6 +31,7 @@ from subprocess import Popen, PIPE
 import numpy  as np
 import pandas as pd
 import pyfits as pf
+import scipy.interpolate as ip
 
 import fmlopack.fm.fmscan as fms
 
@@ -38,7 +39,7 @@ import fmlopack.fm.fmscan as fms
 # ==============================================================================
 # ==============================================================================
 def load(obstable, sam45log, fmlolog, antlog, **kwargs):
-    hdulist = Nro45mData()
+    hdulist = Nro45mFmlo()
     hdulist._obstable(obstable)
     hdulist._sam45dict()
     hdulist._fmlolog(fmlolog)
@@ -56,7 +57,7 @@ def open(fitsname=None, mode='readonly', memmap=None, save_backup=False, **kwarg
         root.destroy()
         if fitsname == '': return
 
-    hdulist = Nro45mData.fromfile(fitsname, mode, memmap, save_backup, **kwargs)
+    hdulist = Nro45mFmlo.fromfile(fitsname, mode, memmap, save_backup, **kwargs)
     hdulist._sam45dict()
     hdulist.info()
 
@@ -65,7 +66,7 @@ def open(fitsname=None, mode='readonly', memmap=None, save_backup=False, **kwarg
 
 # ==============================================================================
 # ==============================================================================
-class Nro45mData(pf.HDUList):
+class Nro45mFmlo(pf.HDUList):
     # --------------------------------------------------------------------------
     def __init__(self, hdus=[], file=None):
         pf.HDUList.__init__(self, hdus, file)
@@ -74,16 +75,20 @@ class Nro45mData(pf.HDUList):
         return self['PRIMARY'].header['VERSION']
 
     # --------------------------------------------------------------------------
-    def fmscan(self, array_id, time_offset=0):
+    def fmscan(self, array_id, binning=1, time_offset=0):
         '''
         Return a FmScan of the selected array ID (e.g. A5)
         '''
         data     = self[array_id].data
         header   = self[array_id].header
-        scan_wid = header['NAXIS1']
+        scan_wid = header['NAXIS1'] / binning
         scan_len = header['NAXIS2']
         chan_wid = header['BANDWID'] / scan_wid
 
+        # scan
+        scan = data.reshape((scan_len, scan_wid, binning)).mean(axis=2)
+
+        # freq range
         fmlolog    = self['FMLOLOG'].data[time_offset+3:time_offset+scan_len+3]
         chan_fm    = fmlolog.FREQFM / chan_wid
         freq_min   = header['RESTFREQ'] - 0.5*(scan_wid-1)*chan_wid
@@ -100,10 +105,13 @@ class Nro45mData(pf.HDUList):
         radec_df = pd.DataFrame(antlog.RADEC, time_idx)[time_min:time_max]
         radec    = np.asarray(radec_df.resample('100L').interpolate())
 
+        # tsys
+        tsys_raw  = np.asarray(header['TSYS'].split(','), 'f8')
+        tsys      = tsys_raw.reshape((scan_wid, binning)).mean(axis=1)
+
         # other components
         date_time = fmlolog.TIME
         interval  = np.tile(header['CDELT2'], scan_len)
-        tsys      = np.asarray(header['TSYS'].split(','), 'f8')
         fmstatus  = 'modulated'
 
         # make fmrecord
@@ -113,7 +121,7 @@ class Nro45mData(pf.HDUList):
         shapes = [1, 2, 1, 1, 2]
         fmrecord = np.rec.fromarrays(alist, zip(names, dtypes, shapes))
 
-        return fms.FmScan(data, tsys, fmrecord, fmstatus)
+        return fms.FmScan(scan, tsys, fmrecord, fmstatus)
 
     # --------------------------------------------------------------------------
     def _obstable(self, obstable):
@@ -397,10 +405,37 @@ class Nro45mData(pf.HDUList):
         try: return cfg[key][prop]
         except: return None
 
+# ==============================================================================
+# ==============================================================================
+class Nro45mPsw(object):
+    def __init__(self, fitsname, maskedge=1, useGHz=True):
+        self.data   = pf.getdata(fitsname)
+        self.header = pf.getheader(fitsname)
+        self.freq   = self.frequency(useGHz)
+        self.spec   = self.spectrum(maskedge)
+        self.rms    = None
+
+    def frequency(self, useGHz=True):
+        factor = 1e-9 if useGHz else 1.0
+        naxis  = self.header['NAXIS2']
+        crpix  = self.header['CRPIX2']
+        crval  = float(self.data['CRVAL2'])
+        cdelt  = float(self.data['CDELT2'])
+        return factor * (crval + cdelt * (np.arange(naxis)-crpix+0.5))
+
+    def spectrum(self, maskedge):
+        spec = self.data['DATA'][0]
+        if maskedge: spec[:maskedge], spec[-maskedge:] = 0, 0
+        return spec
+
+    def interpolate(self, frequency):
+        f = ip.interp1d(self.freq, self.spec, bounds_error=False)
+        return f(frequency)
+
 
 # ==============================================================================
 # ==============================================================================
-class Nro45mDataError(Exception):
+class Nro45mError(Exception):
     def __init__(self, message):
         self.message = message
 

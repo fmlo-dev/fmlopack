@@ -76,16 +76,17 @@ class FmScan(np.ndarray):
         return FmScan(mod_scan, self.tsys, self.fmrecord, 'modulated')
 
     # --------------------------------------------------------------------------
-    def nuobs(self):
+    def nuobs(self, useGHz=True):
         # check valid
         if self.fmstatus == 'modulated':
             raise FmScanError('this attribute is unavailable in modulated scan')
 
+        factor = 1e-9 if useGHz else 1.0
         nuobs_min = self.fmrecord.FREQRANGE[:,0].min()
         nuobs_max = self.fmrecord.FREQRANGE[:,1].max()
         nuobs_num = self.shape[1]
 
-        return np.linspace(nuobs_min, nuobs_max, nuobs_num)
+        return factor * np.linspace(nuobs_min, nuobs_max, nuobs_num)
 
     # --------------------------------------------------------------------------
     def spectrum(self, mode='signal'):
@@ -121,17 +122,19 @@ class FmScan(np.ndarray):
         return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus)
 
     # --------------------------------------------------------------------------
-    def ppca(self, target='clean', mode='bic', time_chunk=None, npc_max=None, sharpness=0.1):
+    def ppca(self, target='clean', mode='laplace', time_chunk=None, npc_max=None, sharpness=0.1, dev=False):
         in_scan  = np.asarray(self)
         out_scan = np.zeros_like(in_scan)
         tchunk   = time_chunk or len(in_scan)
         npc_max  = tchunk-1 if npc_max is None else npc_max
+        probs    = np.empty((len(in_scan)/tchunk, len(range(1, npc_max))))
 
         # PCA cleaning
         for i in range(len(in_scan)/tchunk):
             in_i  = in_scan[i*tchunk:(i+1)*tchunk]
             p     = stat.PPCA(in_i)
             prob  = [getattr(p, mode)(k, sharpness) for k in range(1, npc_max)]
+            probs[i] = prob
             npc   = np.argmax(np.asarray(prob))+1
             print('Npc = {}'.format(npc))
             com_i = np.dot(p.U[:,:npc], np.dot(np.diag(p.d[:npc]), p.Vt[:npc]))
@@ -143,7 +146,8 @@ class FmScan(np.ndarray):
             else:
                 raise FmScanError('invalid target selected')
 
-        return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus)
+        if dev: return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus), probs
+        else:   return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus)
 
     # --------------------------------------------------------------------------
     def offset(self, fmrecord_offset=0):
