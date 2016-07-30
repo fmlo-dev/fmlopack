@@ -10,6 +10,7 @@ from itertools import product
 class PCA:
     def __init__(self, scan, fraction):
         assert 0 <= fraction <= 1
+        scan = np.asarray(scan)
         self.U, self.d, self.Vt = np.linalg.svd(scan, full_matrices=False)
 
         assert np.all(self.d[:-1] >= self.d[1:])
@@ -29,28 +30,33 @@ class PCA:
 # ==============================================================================
 class PPCA(PCA):
     # --------------------------------------------------------------------------
-    def __init__(self, scan):
+    def __init__(self, scan, mode='laplace', npc_max=None):
         PCA.__init__(self, scan, fraction=1.00)
         self.dim_data = scan.shape[1]
         self.dim_max  = scan.shape[0]
+        self.npc_max  = self.dim_max if npc_max is None else npc_max
+        self.k_range  = np.arange(1, self.npc_max)
+        self.mode     = mode
+
         self.l_org = np.zeros(self.dim_data)
         self.l_org[:len(self.eigen)] = self.eigen / len(self.eigen)
+        
+        self.probs = np.zeros_like(self.k_range)
+        for k in self.k_range:
+            self.probs[k-1] = getattr(self, self.mode)(k)
 
     # --------------------------------------------------------------------------
-    def laplace(self, k, sharpness=1.0):
+    def laplace(self, k):
         '''
         return probability (log10, not normalized) of k-dim model
         '''
-        d = self.dim_data
+        D = self.dim_data
         N = self.dim_max
-        m = d*k - k*(k+1)/2.0
-        a = sharpness
-        n = N + 1.0 - a
+        m = D*k - k*(k+1)/2.0
         assert 0 < k < N
-
-        v_opt = N*np.sum(self.l_org[k:]) / (n*(d-k)-2.0)
+        v_opt = np.sum(self.l_org[k:]) / (D-k)
         l_opt = np.zeros_like(self.l_org)
-        l_opt[:k] = (N*self.l_org[:k]+a) / (N-1.0+a)
+        l_opt[:k] = self.l_org[:k]
         l_opt[k:] = v_opt
 
         Az = self._Az(k, self.l_org, l_opt)
@@ -58,8 +64,8 @@ class PPCA(PCA):
 
         p_dim  = 0.0
         p_dim += pU
-        p_dim += (-N/2.0) * np.log10(np.prod(self.l_org[:k]))
-        p_dim += (-N*(d-k)/2.0) * np.log10(v_opt)
+        p_dim += (-N/2.0) * np.sum(np.log10(self.l_org[:k]))
+        p_dim += (-N*(D-k)/2.0) * np.log10(v_opt)
         p_dim += ((m+k)/2.0) * np.log10(2.0*np.pi)
         p_dim += -0.5 * Az
         p_dim += -(k/2.0) * np.log10(N)
@@ -67,32 +73,30 @@ class PPCA(PCA):
         return p_dim
 
     # --------------------------------------------------------------------------
-    def bic(self, k, sharpness=1.0):
+    def bic(self, k):
         '''
         return probability (log10, not normalized) of k-dim model
         using BIC approximation
         '''
-        d = self.dim_data
+        D = self.dim_data
         N = self.dim_max
-        m = d*k - k*(k+1)/2.0
-        a = sharpness
-        n = N + 1.0 - a
+        m = D*k - k*(k+1)/2.0
         assert 0 < k < N
 
-        v_opt = N*np.sum(self.l_org[k:]) / (n*(d-k)-2.0)
+        v_opt = np.sum(self.l_org[k:]) / (D-k)
 
         p_dim  =  0.0
-        p_dim += (-N/2.0) * np.log10(np.prod(self.l_org[:k]))
-        p_dim += (-N*(d-k)/2.0) * np.log10(v_opt)
+        p_dim += (-N/2.0) * np.sum(np.log10(self.l_org[:k]))
+        p_dim += (-N*(D-k)/2.0) * np.log10(v_opt)
         p_dim += (-(m+k)/2.0) * np.log10(N)
 
         return p_dim
 
     # --------------------------------------------------------------------------
     def _pU(self, k):
-        d  = self.dim_data
+        D  = self.dim_data
         i  = np.arange(k)+1.0
-        q  = (d-i+1.0)/2.0
+        q  = (D-i+1.0)/2.0
 
         pU = 0.0
         pU += -k * np.log10(2)
@@ -104,7 +108,6 @@ class PPCA(PCA):
     # --------------------------------------------------------------------------
     def _Az(self, k, l_org, l_opt):
         N  = self.dim_max
-        d  = self.dim_data
 
         l_org_v = l_org[:k].reshape((k,1))
         l_org_h = l_org

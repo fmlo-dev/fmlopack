@@ -30,7 +30,7 @@ from subprocess import Popen, PIPE
 
 import numpy  as np
 import pandas as pd
-import pyfits as pf
+from astropy.io import fits as pf
 import scipy.interpolate as ip
 
 import fmlopack.fm.fmscan as fms
@@ -38,13 +38,13 @@ import fmlopack.fm.fmscan as fms
 
 # ==============================================================================
 # ==============================================================================
-def load(obstable, sam45log, fmlolog, antlog, **kwargs):
+def load(obstable, sam45log, fmlolog, antlog, array_ids='all', **kwargs):
     hdulist = Nro45mFmlo()
     hdulist._obstable(obstable)
     hdulist._sam45dict()
     hdulist._fmlolog(fmlolog)
     hdulist._antlog(antlog)
-    hdulist._sam45log(sam45log)
+    hdulist._sam45log(sam45log, array_ids)
     hdulist.info()
 
     return hdulist
@@ -75,24 +75,32 @@ class Nro45mFmlo(pf.HDUList):
         return self['PRIMARY'].header['VERSION']
 
     # --------------------------------------------------------------------------
-    def fmscan(self, array_id, binning=1, time_offset=0):
+    def fmscan(self, array_id, binning=1, cutedge=0, time_offset=0):
         '''
         Return a FmScan of the selected array ID (e.g. A5)
         '''
-        data     = self[array_id].data
         header   = self[array_id].header
-        scan_wid = header['NAXIS1'] / binning
+        scan_wid = header['NAXIS1']/binning
         scan_len = header['NAXIS2']
-        chan_wid = header['BANDWID'] / scan_wid
+        chan_wid = header['BANDWID']/scan_wid
 
-        # scan
-        scan = data.reshape((scan_len, scan_wid, binning)).mean(axis=2)
+        # scan and tsys
+        scan_raw = self[array_id].data
+        tsys_raw = np.asarray(header['TSYS'].split(','), 'f8')
+        scan_bin = scan_raw.reshape((scan_len, scan_wid, binning)).mean(axis=2)
+        tsys_bin = tsys_raw.reshape((scan_wid, binning)).mean(axis=1)
+        if cutedge == 0:
+            scan = scan_bin
+            tsys = tsys_bin
+        else:
+            scan = scan_bin[:,cutedge:-cutedge]
+            tsys = tsys_bin[cutedge:-cutedge]
 
         # freq range
         fmlolog    = self['FMLOLOG'].data[time_offset+3:time_offset+scan_len+3]
         chan_fm    = fmlolog.FREQFM / chan_wid
-        freq_min   = header['RESTFREQ'] - 0.5*(scan_wid-1)*chan_wid
-        freq_max   = header['RESTFREQ'] + 0.5*(scan_wid-1)*chan_wid
+        freq_min   = header['RESTFREQ'] - 0.5*(scan_wid-2*cutedge-1)*chan_wid
+        freq_max   = header['RESTFREQ'] + 0.5*(scan_wid-2*cutedge-1)*chan_wid
         freq_min  += chan_fm * chan_wid
         freq_max  += chan_fm * chan_wid
         freq_range = np.vstack((freq_min, freq_max)).T
@@ -103,11 +111,8 @@ class Nro45mFmlo(pf.HDUList):
         time_max = pd.to_datetime(pd.Series(fmlolog.TIME)).max()
         time_idx = pd.to_datetime(pd.Series(antlog.TIME))
         radec_df = pd.DataFrame(antlog.RADEC, time_idx)[time_min:time_max]
-        radec    = np.asarray(radec_df.resample('100L').interpolate())
-
-        # tsys
-        tsys_raw  = np.asarray(header['TSYS'].split(','), 'f8')
-        tsys      = tsys_raw.reshape((scan_wid, binning)).mean(axis=1)
+        #radec    = np.asarray(radec_df.resample('100L').interpolate())
+        radec    = np.asarray(radec_df.resample('100L').max()) # test ...
 
         # other components
         date_time = fmlolog.TIME
@@ -147,7 +152,7 @@ class Nro45mFmlo(pf.HDUList):
             else: continue
 
             key  = '{}-{:0>3}'.format(key_type, idx)
-            item = '{}={}'.format(line.split()[2], line.split()[3].strip("(')")) 
+            item = '{}={}'.format(line.split()[2], line.split()[3].strip("(')"))
             hdu.header[key] = item
             idx += 1
 
@@ -188,7 +193,8 @@ class Nro45mFmlo(pf.HDUList):
         id_to_idx = lambda aid: int(aid.strip('A'))-1
 
         if array_ids == 'all':
-            array_idx = range(array_max)
+            #array_idx = range(array_max)
+            array_idx = np.where(array_use)[0]
         else:
             array_ids = sorted(array_ids)
             array_idx = map(id_to_idx, array_ids)
@@ -220,7 +226,7 @@ class Nro45mFmlo(pf.HDUList):
                 elif i == 2: sky[scan_wid*j: scan_wid*(j+1)]  = time_slice
                 elif 3 <= i < scan_len+3:
                     on[i-3, scan_wid*j: scan_wid*(j+1)] = time_slice
-        
+
         finally:
             print('removing: {}'.format(dump_file))
             f.close()
@@ -229,24 +235,35 @@ class Nro45mFmlo(pf.HDUList):
         # calibration and tsys
         att  = np.repeat(sam['IFATT'][array_use], scan_wid)
         tsys = tamb / (10**(0.1*att) * ((r-zero)/(sky-zero)) - 1)
-        scan = tamb * (on-np.median(on,0)) / (10**(0.1*att)*(r-zero)-(sky-zero))
+        #scan = tamb * (on-np.median(on,0)) / (10**(0.1*att)*(r-zero)-(sky-zero))
+        #scan = on - zero
+        scan = on
+
+        print(array_idx)
+        print(np.where(array_use)[0])
 
         # append ImageHDUs
         for j in range(array_max):
-            if not(j in array_idx): continue
-            if sam['SIDBD_TYP'][j] == 'USB':
+            idx = np.where(array_use)[0][j]
+            #if not(j in array_idx): continue
+            if not idx in array_idx: continue
+
+            #if sam['SIDBD_TYP'][j] == 'USB':
+            if sam['SIDBD_TYP'][idx] == 'USB':
                 hdu_data = scan[:, scan_wid*j: scan_wid*(j+1)]
                 hdu_tsys = tsys[scan_wid*j: scan_wid*(j+1)]
                 hdu_tsys_str = str(list(hdu_tsys)).strip('[]')
 
-            elif sam['SIDBD_TYP'][j] == 'LSB':
+            #elif sam['SIDBD_TYP'][j] == 'LSB':
+            elif sam['SIDBD_TYP'][idx] == 'LSB':
                 hdu_data = scan[:, scan_wid*j: scan_wid*(j+1)][:,::-1]
                 hdu_tsys = tsys[scan_wid*j: scan_wid*(j+1)][::-1]
                 hdu_tsys_str = str(list(hdu_tsys)).strip('[]')
 
             hdu = pf.ImageHDU()
             hdu.data = hdu_data
-            hdu.header['EXTNAME']  = idx_to_id(j), 'Name of HDU'
+            #hdu.header['EXTNAME']  = idx_to_id(j), 'Name of HDU'
+            hdu.header['EXTNAME']  = idx_to_id(idx), 'Name of HDU'
             hdu.header['ORGFILE']  = sam45log.split('/')[-1], 'Original file'
             hdu.header['OBJECT']   = sam['SRC_NAME']
             hdu.header['RA']       = sam['SRC_POS'][0], 'Right Ascention (deg)'
@@ -272,7 +289,7 @@ class Nro45mFmlo(pf.HDUList):
     # --------------------------------------------------------------------------
     def _fmlolog(self, fmlolog, skiprows=1):
         '''
-        Load a fmlolog and append a BinTableHDU to HDUList. 
+        Load a fmlolog and append a BinTableHDU to HDUList.
         '''
         time    = []
         status  = []
@@ -313,7 +330,7 @@ class Nro45mFmlo(pf.HDUList):
         hdu.header['TUNIT2']  = 'Hz'
         hdu.header['TUNIT3']  = 'Hz'
         hdu.header['TUNIT4']  = 'km/s'
- 
+
         self.append(hdu)
 
     # --------------------------------------------------------------------------
@@ -408,20 +425,25 @@ class Nro45mFmlo(pf.HDUList):
 # ==============================================================================
 # ==============================================================================
 class Nro45mPsw(object):
-    def __init__(self, fitsname, maskedge=1, useGHz=True):
+    def __init__(self, fitsname, sideband='USB', maskedge=1, useGHz=True):
         self.data   = pf.getdata(fitsname)
         self.header = pf.getheader(fitsname)
+        self.sb     = sideband
         self.freq   = self.frequency(useGHz)
         self.spec   = self.spectrum(maskedge)
         self.rms    = None
+        if self.sb == 'LSB':
+            self.freq = self.freq[::-1]
+            self.spec = self.spec[::-1]
 
     def frequency(self, useGHz=True):
-        factor = 1e-9 if useGHz else 1.0
-        naxis  = self.header['NAXIS2']
-        crpix  = self.header['CRPIX2']
-        crval  = float(self.data['CRVAL2'])
-        cdelt  = float(self.data['CDELT2'])
-        return factor * (crval + cdelt * (np.arange(naxis)-crpix+0.5))
+        f     = 1e-9 if useGHz else 1.0
+        f_sb  = -0.5 if self.sb == 'USB' else +0.5
+        naxis = self.header['NAXIS2']
+        crpix = self.header['CRPIX2']
+        crval = float(self.data['CRVAL2'])
+        cdelt = float(self.data['CDELT2'])
+        return f * (crval + cdelt * (np.arange(naxis)-crpix+f_sb))
 
     def spectrum(self, maskedge):
         spec = self.data['DATA'][0]

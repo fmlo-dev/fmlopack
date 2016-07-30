@@ -28,7 +28,7 @@ class MakeCube(object):
         # input fmscan (cleaned and demodulated)
         self.x_grid, self.x_regrid = fmscan.fmrecord.RADEC.T[0], x_regrid
         self.y_grid, self.y_regrid = fmscan.fmrecord.RADEC.T[1], y_regrid
-        self.z_grid, self.z_regrid = fmscan.nuobs(), fmscan.nuobs()
+        self.z_grid, self.z_regrid = fmscan.nuobs(useGHz=False), fmscan.nuobs(useGHz=False)
         self.s_grid   = self.gridsize(self.x_grid, self.y_grid)
         self.s_regrid = self.gridsize(self.x_regrid, self.y_regrid)
         self.factor   = (self.s_regrid/self.s_grid)**2
@@ -41,7 +41,7 @@ class MakeCube(object):
         self.fms_out = self.modeling()
 
     # --------------------------------------------------------------------------
-    def regrid(self):
+    def regrid_freezed(self):
         print('regrid...')
         shape = (len(self.z_regrid), len(self.y_regrid), len(self.x_regrid))
         scan = np.asarray(self.fms_in)
@@ -53,6 +53,41 @@ class MakeCube(object):
                 cube[:,y,x] += scan[idx] * getattr(self, self.gcf)(rad)
 
         return cube / self.factor
+
+    # --------------------------------------------------------------------------
+    def regrid(self):
+        print('regrid...')
+        shape = (len(self.z_regrid), len(self.y_regrid), len(self.x_regrid))
+        scan = np.asarray(self.fms_in)
+        cube = np.zeros(shape)
+
+        for (y,x) in product(*map(range, shape[1:])):
+            idxs, rads = self.is_search_radius(y,x)
+            weightsum  = 0
+
+            for (idx,rad) in zip(idxs, rads):
+                cube[:,y,x] += getattr(self, self.gcf)(rad) * scan[idx]
+                weightsum   += getattr(self, self.gcf)(rad)
+
+            cube[:,y,x] /= weightsum
+
+        return cube
+
+    # --------------------------------------------------------------------------
+    def regrid_freezed2(self):
+        print('regrid...')
+        shape = (len(self.z_regrid), len(self.y_regrid), len(self.x_regrid))
+        scan = np.asarray(self.fms_in)
+        cube = np.zeros(shape)
+
+        for (y,x) in product(*map(range, shape[1:])):
+            idxs  = self.is_search_box(y,x)
+            if len(idxs) == 0:
+                cube[:,y,x] = 0
+            else:
+                cube[:,y,x] = np.mean(scan[idxs], axis=0)
+
+        return cube
 
     # --------------------------------------------------------------------------
     def modeling(self):
@@ -82,6 +117,14 @@ class MakeCube(object):
         return idxs, rads[idxs]
 
     # --------------------------------------------------------------------------
+    def is_search_box(self, y, x):
+        y_delt = (self.y_grid-self.y_regrid[y])/self.s_regrid
+        x_delt = (self.x_grid-self.x_regrid[x])/self.s_regrid
+        idxs   = np.where((np.abs(x_delt)<0.5) & (np.abs(y_delt)<0.5))[0]
+
+        return idxs
+
+    # --------------------------------------------------------------------------
     def gridsize(self, x_axis, y_axis, cutoff=1.0/3600):
         x_diff = np.abs(np.diff(x_axis))
         y_diff = np.abs(np.diff(y_axis))
@@ -99,7 +142,8 @@ class MakeCube(object):
 
     # --------------------------------------------------------------------------
     def bessel_gauss(self, r, a=1.55, b=2.52):
-        return sp.j1(np.pi*r/a)/(np.pi*r/a) * np.exp(-(r/b)**2)
+        if r == 0: return 0.5
+        else:      return sp.j1(np.pi*r/a)/(np.pi*r/a) * np.exp(-(r/b)**2)
 
     def sinc_gauss(self, r, a=1.55, b=2.52):
         return np.sinc(r/a) * np.exp(-(r/b)**2)

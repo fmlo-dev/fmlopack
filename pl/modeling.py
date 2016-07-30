@@ -20,7 +20,7 @@ class CutoffModel(object):
     def __init__(self, fmscan, sn_threshold=10):
         self.nuobs = fmscan.nuobs(useGHz=True)
         self.spec  = fmscan.spectrum('signal')
-        self.noise = fmscan.spectrum('noise')
+        self.noise = fmscan.spectrum('noise-tsys')
         self.thres = sn_threshold
         self.model, self.resid = self.modeling()
 
@@ -41,7 +41,7 @@ class GaussianModel(object):
                 iter_max=10000, init_width=2.0/4096, dev=False):
         self.nuobs = fmscan.nuobs(useGHz=True)
         self.spec  = fmscan.spectrum('signal')
-        self.noise = fmscan.spectrum('noise')
+        self.noise = fmscan.spectrum('noise-tsys')
         self.thres = sn_threshold
         self.niter = iter_max
         self.width = init_width
@@ -108,7 +108,7 @@ class DeconvolutionModel(object):
                 iter_max=10000, init_width=2.0/4096, init_cutoff=20, dev=False):
         self.nuobs  = fmscan.nuobs(useGHz=True)
         self.spec   = fmscan.spectrum('signal')
-        self.noise  = fmscan.spectrum('noise')
+        self.noise  = fmscan.spectrum('noise-tsys')
         self.thres  = sn_threshold
         self.niter  = iter_max
         self.width  = init_width

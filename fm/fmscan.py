@@ -95,8 +95,8 @@ class FmScan(np.ndarray):
             raise FmScanError('this attribute is unavailable in modulated scan')
 
         if   mode == 'signal': return self._spec()
-        elif mode == 'noise':  return self._noisespec()
-        elif mode == 'sn':     return self._spec()/self._noisespec()
+        elif mode == 'noise-tsys': return self._noise_tsys_spec()
+        elif mode == 'noise-jk':   return self._noise_jk_spec()
 
     # --------------------------------------------------------------------------
     def pca(self, target='clean', fraction=0.990, time_chunk=None, npc_max=None):
@@ -122,20 +122,18 @@ class FmScan(np.ndarray):
         return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus)
 
     # --------------------------------------------------------------------------
-    def ppca(self, target='clean', mode='laplace', time_chunk=None, npc_max=None, sharpness=0.1, dev=False):
+    def ppca(self, target='clean', mode='laplace', time_chunk=None, npc_max=None, dev=False):
         in_scan  = np.asarray(self)
         out_scan = np.zeros_like(in_scan)
         tchunk   = time_chunk or len(in_scan)
-        npc_max  = tchunk-1 if npc_max is None else npc_max
-        probs    = np.empty((len(in_scan)/tchunk, len(range(1, npc_max))))
+        probs    = []
 
         # PCA cleaning
         for i in range(len(in_scan)/tchunk):
             in_i  = in_scan[i*tchunk:(i+1)*tchunk]
-            p     = stat.PPCA(in_i)
-            prob  = [getattr(p, mode)(k, sharpness) for k in range(1, npc_max)]
-            probs[i] = prob
-            npc   = np.argmax(np.asarray(prob))+1
+            p     = stat.PPCA(in_i, mode, npc_max)
+            npc   = np.argmax(p.probs)+1
+            probs.append(p.probs)
             print('Npc = {}'.format(npc))
             com_i = np.dot(p.U[:,:npc], np.dot(np.diag(p.d[:npc]), p.Vt[:npc]))
 
@@ -146,8 +144,12 @@ class FmScan(np.ndarray):
             else:
                 raise FmScanError('invalid target selected')
 
-        if dev: return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus), probs
-        else:   return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus)
+        probs = np.asarray(probs).mean(0)
+
+        if dev: 
+            return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus), probs
+        else:
+            return FmScan(out_scan, self.tsys, self.fmrecord, self.fmstatus)
 
     # --------------------------------------------------------------------------
     def offset(self, fmrecord_offset=0):
@@ -185,13 +187,13 @@ class FmScan(np.ndarray):
 
     # --------------------------------------------------------------------------
     def _spec(self):
-        spec   = np.mean(np.asarray(self), axis=0)
-        tinteg = np.mean(self._integmap(), axis=0)
+        spec   = np.sum(np.asarray(self), axis=0)
+        tinteg = np.sum((self._integmap() != 0.0), axis=0)
 
-        return spec / (tinteg/np.max(tinteg))
+        return spec / tinteg
 
     # --------------------------------------------------------------------------
-    def _noisespec(self):
+    def _noise_tsys_spec(self):
         interval  = np.tile(self.fmrecord.INTERVAL, (len(self.tsys),1))
         chan_wid  = np.diff(self.fmrecord.FREQRANGE)[:,0]/(len(self.tsys)-1)
         noise_map = (interval*chan_wid).T / (self.tsys)**2
@@ -205,6 +207,55 @@ class FmScan(np.ndarray):
         else: raise FmScanError('invalid target selected')
 
         return np.sum(noise_map, axis=0)**(-0.5)
+
+    # --------------------------------------------------------------------------
+    def _noise_tsys_spec2(self):
+        '''
+        for test
+        '''
+        interval  = np.tile(self.fmrecord.INTERVAL, (len(self.tsys),1))
+        interval[:] = 0.09
+        chan_wid  = np.diff(self.fmrecord.FREQRANGE)[:,0]/(len(self.tsys)-1)
+        noise_map = (self.tsys)**2 / (interval*chan_wid).T
+
+        if self.fmstatus == 'demodulated-obs':
+            noise_map = self._demod(noise_map, self.fmrecord.CHANFM)
+
+        elif self.fmstatus == 'demodulated-img':
+            noise_map = self._demod(noise_map, self.fmrecord.CHANFM*(-1))
+
+        else: raise FmScanError('invalid target selected')
+
+        spec   = np.sum(noise_map, axis=0)
+        tinteg = np.sum((self._integmap() != 0.0), axis=0)
+
+        return spec**0.5 / tinteg
+
+    # --------------------------------------------------------------------------
+    def _noise_jk_spec(self, sampling=100):
+        in_scan  = np.asarray(self)
+        out_scan = np.zeros((sampling, in_scan.shape[1]))
+
+        for i in range(sampling):
+            r = np.random.randint(0,2,in_scan.shape[0]) * 2 - 1
+            spec   = np.sum((in_scan.T * r).T, axis=0)
+            tinteg = np.sum((self._integmap() != 0.0), axis=0)
+            out_scan[i] = spec / tinteg
+
+        return np.std(out_scan, axis=0)
+
+    # --------------------------------------------------------------------------
+    def _noise_jk_spec2(self, sampling=100):
+        in_scan  = np.asarray(self)/0.9
+        out_scan = np.zeros((sampling, in_scan.shape[1]))
+
+        for i in range(sampling):
+            r = np.random.randint(0,2,in_scan.shape[0]) * 2 - 1
+            spec   = np.sum((in_scan.T * r).T, axis=0)
+            tinteg = np.sum((self._integmap() != 0.0), axis=0)
+            out_scan[i] = spec / tinteg
+
+        return np.std(out_scan, axis=0)
 
     # --------------------------------------------------------------------------
     def _integmap(self):
@@ -315,6 +366,18 @@ def copy(fmscan):
     fmstatus = fmscan.fmstatus
 
     return FmScan(scan, tsys, fmrecord, fmstatus)
+
+def savez(filename, fmscan):
+    scan     = np.copy(fmscan)
+    tsys     = fmscan.tsys
+    fmrecord = fmscan.fmrecord
+    fmstatus = fmscan.fmstatus
+    np.savez(filename, scan=scan, tsys=tsys, fmrecord=fmrecord, fmstatus=fmstatus)
+
+def load(filename):
+    f = np.load(filename)
+    return FmScan(f['scan'], f['tsys'], f['fmrecord'], f['fmstatus'])
+
 
 
 # ==============================================================================
